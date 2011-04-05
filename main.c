@@ -5,8 +5,13 @@
 #include <strings.h>
 #include <string.h>
 #include <assert.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 #include "groupby.h"
 #include "config.h"
+
+bool debug = false;
 
 static int aggr_of_str(char const *str, struct aggr_func const **aggr)
 {
@@ -16,30 +21,43 @@ static int aggr_of_str(char const *str, struct aggr_func const **aggr)
             return 0;
         }
     }
-    fprintf(stderr, "Unknown function '%s'", str);
+    fprintf(stderr, "Unknown function '%s'\n", str);
     return -1;
 }
 
 static void set_range(struct row_conf *row_conf, unsigned first, unsigned last, struct aggr_func const *aggr, bool inv)
 {
-    assert(first > 0 && last > 0);
     if (last < first) {
         unsigned tmp = first;
         first = last; last = tmp;
     }
 
-    for (unsigned f = first-1; f < last; f++) {
-        assert(f < row_conf->nb_field_confs);
-        row_conf->confs[f].need_num = aggr->need_num;
-        row_conf->confs[f].aggr = aggr;
+    for (unsigned f = 0; f < row_conf->nb_fields; f++) {
+        bool const in_between = f >= first && f <= last;
+        if ((!inv && in_between) || (inv && !in_between)) {
+            assert(f < row_conf->nb_fields);
+            row_conf->fields[f].need_num = aggr ? aggr->need_num : false;
+            if (aggr && !row_conf->fields[f].aggr) {
+                row_conf->nb_aggr_fields ++;
+            } else if (!aggr && row_conf->fields[f].aggr) {
+                row_conf->nb_aggr_fields --;
+            }
+            row_conf->fields[f].aggr = aggr;
+            if (aggr) {
+                if (debug) fprintf(stderr, "field %u uses aggr function %s\n", f, aggr->name);
+            } else {
+                if (debug) fprintf(stderr, "field %u is groupped\n", f);
+            }
+        }
     }
 }
 
 static int set_fieldspec_conf(struct row_conf *row_conf, char const *start, char const *stop, struct aggr_func const *aggr, bool inv)
 {
     char const *const spec = start;
+    int const spec_len = stop - start;
     if (start >= stop) return 0;
-    if (*start == '!') set_fieldspec_conf(row_conf, start+1, stop, aggr, inv);
+    if (*start == '!') return set_fieldspec_conf(row_conf, start+1, stop, aggr, inv);
 
     unsigned first = 0, last = 0;   // invalid field numbers
     char *eoi;
@@ -59,20 +77,19 @@ static int set_fieldspec_conf(struct row_conf *row_conf, char const *start, char
         last = first;
     }
 
-    if (start < stop && *start != ',')
-bad_spec:
-        fprintf(stderr, "Bad field spec: %s", spec);
+    if (start < stop && *start != ',') {
+        fprintf(stderr, "Bad field spec: '%.*s'\n", spec_len, spec);
         return -1;
     }
 
-    set_range(frow_conf, first, last, aggr, inv);
+    set_range(row_conf, first-1, last-1, aggr, inv);
 
     if (start >= stop) return 0;
 
     return set_fieldspec_conf(row_conf, start+1, stop, aggr, inv);
 }
 
-static int parse_conf(struct row_conf *row_conf, char const *opt)
+static int aggr_conf(struct row_conf *row_conf, char const *opt)
 {
     // First look for the function to set
     struct aggr_func const *aggr = NULL;
@@ -89,27 +106,67 @@ static int parse_conf(struct row_conf *row_conf, char const *opt)
     return set_fieldspec_conf(row_conf, opt, colon, aggr, false);
 }
 
+static int group_conf(struct row_conf *row_conf, char const *opt)
+{
+    return set_fieldspec_conf(row_conf, opt, opt + strlen(opt), NULL, false);
+}
+
+static void syntax(void)
+{
+    printf("groupby [ -h | -a field_spec:function ... | -g field_spec ] [ -d char ] [ -v ]\n"
+           "\n"
+           "where :\n"
+           "  field_spec : n | n-m | -n | n- | field_spec,field_spec | !field_spec\n"
+           "  n/m : field numbers (first field is 1)\n");
+}
+
 int main(int nb_args, char **args)
 {
-    struct row_conf *row_conf = row_conf_new(1000); // as a first version
+    struct row_conf *row_conf = row_conf_new(NB_MAX_FIELDS); // as a first version
+    char delimiter = ',';
+    int input = 0;
 
-    for (unsigned a = 1; a < nb_args; a++) {
-        if (strcasecmp(args+a, "-h") == 0 || strcasecmp(args+a, "--help") == 0) {
+    for (int a = 1; a < nb_args; a++) {
+        if (strcasecmp(args[a], "-h") == 0 || strcasecmp(args[a], "--help") == 0) {
             syntax();
             return EXIT_SUCCESS;
-        } else if (strcasecmp(args+a, "-a") == 0) {
-            if (0 != parse_conf(row_conf, args+a)) {
+        } else if (strcasecmp(args[a], "-v") == 0 || strcasecmp(args[a], "--verbose") == 0) {
+            debug = true;
+        } else if (strcasecmp(args[a], "-a") == 0 && a < nb_args-1) {
+            if (0 != aggr_conf(row_conf, args[a+1])) {
                 fprintf(stderr, "Try --help");
                 return EXIT_FAILURE;
             }
+            a ++;
+        } else if (strcasecmp(args[a], "-g") == 0 && a < nb_args-1) {
+            if (0 != group_conf(row_conf, args[a+1])) {
+                fprintf(stderr, "Try --help");
+                return EXIT_FAILURE;
+            }
+            a ++;
+        } else if (strcasecmp(args[a], "-d") == 0 && a < nb_args-1) {
+            if (strlen(args[a+1]) != 1) {
+                fprintf(stderr, "Delimiter must be a single char\n");
+                return EXIT_FAILURE;
+            }
+            delimiter = args[a+1][0];
+            if (debug) fprintf(stderr, "Delimiter is now '%c'\n", delimiter);
+            a ++;
+        } else if ((strcasecmp(args[a], "-i") == 0 || strcasecmp(args[a], "--input") == 0) && a < nb_args-1) {
+            input = open(args[a+1], O_RDONLY);
+            if (input < 0) {
+                perror("open");
+                return EXIT_FAILURE;
+            }
+            a ++;
         } else {
-            fprintf(stderr, "Unknown option '%s'\n", args+a);
+            fprintf(stderr, "Unknown option '%s'\n", args[a]);
             syntax();
             return EXIT_FAILURE;
         }
     }
 
-    if (0 != do_groupby(row_conf)) {
+    if (0 != do_groupby(row_conf, delimiter, input)) {
         return EXIT_FAILURE;
     }
 

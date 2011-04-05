@@ -5,7 +5,7 @@ AM_CPPFLAGS = -D_GNU_SOURCE
 
 bin_PROGRAMS = groupby
 
-groupby_SOURCES = main.c aggr.c groupby.h groupby.c
+groupby_SOURCES = main.c aggr.c groupby.h groupby.c group.c csv.c jhash.h jhash.c
 
 .PHONY: cscope clear
 
