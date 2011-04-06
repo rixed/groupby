@@ -170,7 +170,7 @@ int main(int nb_args, char **args)
             }
             a ++;
         } else if ((strcasecmp(args[a], "-o") == 0 || strcasecmp(args[a], "--output") == 0) && a < nb_args-1) {
-            output = open(args[a+1], O_WRONLY);
+            output = open(args[a+1], O_WRONLY|O_CREAT|O_TRUNC, 0644);
             if (output < 0) {
                 perror("open");
                 return EXIT_FAILURE;
