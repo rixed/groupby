@@ -36,8 +36,7 @@ static void set_range(struct row_conf *row_conf, unsigned first, unsigned last, 
         bool const in_between = f >= first && f <= last;
         if ((!inv && in_between) || (inv && !in_between)) {
             assert(f < row_conf->nb_fields);
-            row_conf->fields[f].need_num = aggr ? aggr->need_num : false;
-            row_conf->fields[f].aggr = aggr;
+            row_conf->fields[f] = aggr;
             if (aggr) {
                 if (debug) fprintf(stderr, "field %u uses aggr function %s\n", f, aggr->name);
             } else {

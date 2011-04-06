@@ -21,8 +21,7 @@ struct row_conf *row_conf_new(unsigned nb_fields_max)
     conf->nb_aggr_fields = 0;
     conf->aggr_tot_size = 0;
     for (unsigned f = 0; f < conf->nb_fields; f++) {
-        conf->fields[f].need_num = false;
-        conf->fields[f].aggr = NULL;
+        conf->fields[f] = NULL;
     }
 
     return conf;
@@ -31,10 +30,10 @@ struct row_conf *row_conf_new(unsigned nb_fields_max)
 void row_conf_finalize(struct row_conf *conf)
 {
     for (unsigned f = 0; f < conf->nb_fields; f++) {
-        if (! conf->fields[f].aggr) continue;
+        if (! conf->fields[f]) continue;
         conf->nb_aggr_fields ++;
         conf->aggr_cumul_size[f] = conf->aggr_tot_size;
-        conf->aggr_tot_size += conf->fields[f].aggr->ops.size();
+        conf->aggr_tot_size += conf->fields[f]->ops.size();
     }
 }
 
@@ -97,7 +96,7 @@ static void record_cb(void *state_)
     struct key_str key = { .str = key_buf, .len = 0 };
 
     for (unsigned f = 0; f < state->field_no; f++) {
-        if (state->conf->fields[f].aggr) continue;
+        if (state->conf->fields[f]) continue;
         key_str_append(&key, state->values[f]);
     }
 
@@ -108,20 +107,9 @@ static void record_cb(void *state_)
         // update the aggregate values in the group
         assert(state->field_no <= state->conf->nb_fields);
         for (unsigned f = 0; f < state->field_no; f++) {
-            if (!state->conf->fields[f].aggr) continue;
+            if (!state->conf->fields[f]) continue;
             // aggregate this value
-            union field_value current;
-            if (state->conf->fields[f].need_num) {
-                char *end;
-                current.num = strtoll(state->values[f], &end, 0);
-                if (*end != '\0') {
-                    fprintf(stderr, "Cannot parse '%s' as numeric value (field %u, line %u)\n", state->values[f], f+1, state->record_no+1);
-                    return;
-                }
-            } else {
-                current.str = state->values[f];
-            }
-            state->conf->fields[f].aggr->ops.fold(group->values + state->conf->aggr_cumul_size[f], &current);
+            state->conf->fields[f]->ops.fold(group->values + state->conf->aggr_cumul_size[f], state->values[f]);
         }
         if (state->field_no > group->nb_fields) group->nb_fields = state->field_no;
     }
@@ -142,27 +130,24 @@ static void dump_group(struct group *group, void *state_)
 {
     struct state *state = state_;
     char delimiter[2] = { state->delimiter, '\0' };
-    static char line[MAX_RECORD_LENGTH];
+    FILE *output = fdopen(state->output, "w");
 
     // extract grouped values from key_str
     char const *grouped_values[NB_MAX_FIELDS];
     unsigned const nb_grouped_values = key_str_extract(&group->grouped_values, grouped_values);
     unsigned g = 0;
-    size_t len = 0;
     for (unsigned f = 0; f < group->nb_fields; f++) {
         void const *src;
-        if (state->conf->fields[f].aggr) {
-            src = state->conf->fields[f].aggr->ops.finalize(group->values + state->conf->aggr_cumul_size[f]);
+        if (state->conf->fields[f]) {
+            src = state->conf->fields[f]->ops.finalize(group->values + state->conf->aggr_cumul_size[f]);
         } else {
             assert(g < nb_grouped_values);
             src = grouped_values[g++];
         }
         char const *const quote = must_quote(src, state->delimiter) ? "\"":"";
-        len += sprintf(line+len, "%s%s%s%s", f > 0 ? delimiter:"", quote, (char *)src, quote);
+        fprintf(output, "%s%s%s%s", f > 0 ? delimiter:"", quote, (char *)src, quote);
     }
-    len += sprintf(line+len, "\n");
-    assert(len < sizeof(line));
-    write(state->output, line, len);
+    fprintf(output, "\n");
 }
 
 static ssize_t reader(void *dst, size_t dst_size, void *state_)

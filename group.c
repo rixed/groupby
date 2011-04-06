@@ -71,8 +71,8 @@ static struct group *group_new(struct groups *groups, struct key_str *key, struc
 
     group->nb_fields = 0;  // will be incremented when we actually see the fields
     for (unsigned f = 0; f < conf->nb_fields; f++) {
-        if (! conf->fields[f].aggr) continue;
-        conf->fields[f].aggr->ops.ctor(group->values + conf->aggr_cumul_size[f]);
+        if (! conf->fields[f]) continue;
+        conf->fields[f]->ops.ctor(group->values + conf->aggr_cumul_size[f]);
     }
 
     SLIST_INSERT_HEAD(groups->hash + h, group, entry);

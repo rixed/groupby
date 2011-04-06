@@ -12,11 +12,6 @@
 
 extern bool debug;
 
-union field_value {
-    long long num;
-    char const *str;
-};
-
 extern struct aggr_func {
     struct aggr_ops {
         // return the size of the internal object to be allocated
@@ -24,11 +19,10 @@ extern struct aggr_func {
         // construct a new object to be given to fold
         void (* ctor)(void *);   // given pointer points to a space of AGGR_OBJ_SIZE bytes
         // update the object previously returned by new with a new value
-        void (*fold)(void *old, union field_value const *current);
+        void (*fold)(void *old, char const *current);
         // get the final value of the object (as a string)
         char const *(*finalize)(void *v);
     } const ops;
-    bool need_num;
     char const *name;
 } aggr_funcs[];
 
@@ -39,10 +33,7 @@ struct row_conf {
     unsigned nb_aggr_fields;    // how many of which have an aggr function
     size_t aggr_cumul_size[NB_MAX_FIELDS];  // size of all values before this field
     size_t aggr_tot_size;
-    struct field_conf {
-        bool need_num;
-        struct aggr_func const *aggr; // If NULL then group by this field
-    } fields[];  // beware!
+    struct aggr_func const *fields[]; // If NULL then group by this field
 };
 
 // Return an empty row_conf
