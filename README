@@ -7,13 +7,11 @@ Main parameter is -a :
 
 if not specified, func is rem
 
-field-spec: n | n..m | ..m | n.. | field-spec,field-spec | !field-spec
+field-spec: n | n-m | -m | n- | field-spec,field-spec | !field-spec
 
-where n and m are integers that can be > or < to 0 (but not =)
+where n and m are positive integers (fields are numbered from 1)
 
 func : rem | avg | min | max | sum | first | last | smaller | greatest
 
-sum, avg, min and max require numeric values (of any base, including ASCII, 
-with '0' as the 0), while smaller and greater compare the values as string 
-(ie. "1" is greated than "09").
+sum, avg, min and max require numeric values parsable by strtoll().
 
