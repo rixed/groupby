@@ -71,6 +71,32 @@ static void str_value_set(struct str_value *v, char const *str)
 }
 
 /*
+ * Rem
+ */
+
+static size_t rem_size(void)
+{
+    return 0;
+}
+
+static void rem_ctor(void *v_)
+{
+    (void)v_;
+}
+
+static void rem_fold(void *v_, char const *current)
+{
+    (void)v_;
+    (void)current;
+}
+
+static char const *rem_finalize(void *v_)
+{
+    (void)v_;
+    return "";
+}
+
+/*
  * Avg
  */
 
@@ -203,6 +229,7 @@ static void greatest_fold(void *v_, char const *current)
  */
 
 struct aggr_func aggr_funcs[] = {
+    { { rem_size, rem_ctor, rem_fold, rem_finalize }, "rem" },
     { { avg_size, avg_ctor, avg_fold, avg_finalize }, "avg" },
     { { ll_size, min_ctor, min_fold, ll_finalize }, "min" },
     { { ll_size, max_ctor, max_fold, ll_finalize }, "max" },

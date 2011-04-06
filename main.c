@@ -104,6 +104,7 @@ static int aggr_conf(struct row_conf *row_conf, char const *opt)
         }
     } else {
         colon = rawmemchr(opt, '\0');
+        aggr_of_str("rem", &aggr);
     }
 
     // Now set this aggr function for each specified field
