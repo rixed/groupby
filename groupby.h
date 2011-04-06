@@ -6,11 +6,12 @@
 #include <sys/queue.h>
 
 #define SIZEOF_ARRAY(x) (sizeof(x)/sizeof(*(x)))
-#define NB_MAX_FIELDS 60
-#define NB_MAX_FIELD_LENGTH 50000
+#define NB_MAX_FIELDS 500
+#define NB_MAX_FIELD_LENGTH 60000
 #define MAX_RECORD_LENGTH (NB_MAX_FIELDS*(NB_MAX_FIELD_LENGTH+3))
 
 extern bool debug;
+extern unsigned nb_max_fields;
 
 extern struct aggr_func {
     struct aggr_ops {
@@ -39,7 +40,7 @@ struct row_conf {
 // Return an empty row_conf
 struct row_conf *row_conf_new(unsigned nb_fields_max);
 
-void row_conf_finalize(struct row_conf *);
+void row_conf_finalize(unsigned nb_max_fields, struct row_conf *);
 
 int do_groupby(struct row_conf const *, char delimiter, int ifile, int ofile);
 

@@ -12,6 +12,7 @@
 #include "config.h"
 
 bool debug = false;
+unsigned nb_max_fields = NB_MAX_FIELDS;
 
 static int aggr_of_str(char const *str, struct aggr_func const **aggr)
 {
@@ -116,7 +117,7 @@ static int group_conf(struct row_conf *row_conf, char const *opt)
 
 static void syntax(void)
 {
-    printf("groupby [-h | -a field_spec:function ... | -g field_spec] [-d char] [-i input] [-o output] [-v]\n"
+    printf("groupby [-h | -a field_spec:function ... | -g field_spec] [-d char] [-i input] [-o output] [-v] [-m max-fields]\n"
            "\n"
            "where :\n"
            "  field_spec : n | n-m | -n | n- | field_spec,field_spec | !field_spec\n"
@@ -148,6 +149,10 @@ int main(int nb_args, char **args)
                 return EXIT_FAILURE;
             }
             a ++;
+        } else if (strcasecmp(args[a], "-m") == 0 || strcasecmp(args[a], "--max-fields") == 0) {
+            nb_max_fields = strtoul(args[a+1], NULL, 0);    // FIXME
+            if (debug) fprintf(stderr, "Setting max number of fields to %u\n", nb_max_fields);
+            a ++;
         } else if (strcasecmp(args[a], "-d") == 0 && a < nb_args-1) {
             if (strlen(args[a+1]) != 1) {
                 fprintf(stderr, "Delimiter must be a single char\n");
@@ -177,7 +182,7 @@ int main(int nb_args, char **args)
         }
     }
 
-    row_conf_finalize(row_conf);
+    row_conf_finalize(nb_max_fields, row_conf);
 
     if (0 != do_groupby(row_conf, delimiter, input, output)) {
         return EXIT_FAILURE;

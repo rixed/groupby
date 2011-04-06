@@ -27,8 +27,9 @@ struct row_conf *row_conf_new(unsigned nb_fields_max)
     return conf;
 }
 
-void row_conf_finalize(struct row_conf *conf)
+void row_conf_finalize(unsigned nb_max_fields, struct row_conf *conf)
 {
+    conf->nb_fields = nb_max_fields;
     for (unsigned f = 0; f < conf->nb_fields; f++) {
         if (! conf->fields[f]) continue;
         conf->nb_aggr_fields ++;
@@ -81,7 +82,10 @@ static void field_cb(void *field, size_t field_len, void *state_)
     (void)field_len;
     struct state *state = state_;
 
-    assert(state->field_no < state->conf->nb_fields);
+    if (state->field_no >= state->conf->nb_fields) {
+        fprintf(stderr, "More than %u records\n", state->conf->nb_fields);
+        exit(EXIT_FAILURE);
+    }
 
     state->values[state->field_no] = field;
 
@@ -164,7 +168,7 @@ int do_groupby(struct row_conf const *row_conf, char delimiter, int input, int o
     if (! state) return -1;
 
     struct csv csv;
-    if (0 != csv_ctor(&csv, NB_MAX_FIELDS*NB_MAX_FIELD_LENGTH, delimiter, reader, state)) {
+    if (0 != csv_ctor(&csv, nb_max_fields*NB_MAX_FIELD_LENGTH, delimiter, reader, state)) {
         assert(0);
         return -1;
     }
