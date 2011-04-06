@@ -30,7 +30,6 @@ struct row_conf *row_conf_new(unsigned nb_fields_max)
 static struct state {
     struct row_conf const *conf;
     unsigned field_no, record_no;
-    bool record_err;
     int file;
     struct groups groups;
     char delimiter;
@@ -51,7 +50,6 @@ static struct state *state_new(struct row_conf const *conf, int file, char delim
     state->file = file;
     state->delimiter = delimiter;
     state->field_no = state->record_no = 0;
-    state->record_err = false;
     if (0 != groups_ctor(&state->groups)) {
         free(state);
         return NULL;
@@ -71,15 +69,10 @@ static void field_cb(void *field, size_t field_len, void *state_)
     if (debug) fprintf(stderr, "got field '%s'\n", (char *)field);
     (void)field_len;
     struct state *state = state_;
-    if (state->record_err) return;
 
     assert(state->field_no < state->conf->nb_fields);
 
-    state->values[state->field_no] = strdup(field);
-    if (!state->values[state->field_no]) {
-        state->record_err = true;
-        return;
-    }
+    state->values[state->field_no] = field;
 
     state->field_no ++;
 }
@@ -88,57 +81,49 @@ static void record_cb(void *state_)
 {
     struct state *state = state_;
 
-    if (! state->record_err) {
-        static char const *grouped_values[NB_MAX_FIELDS];
-        unsigned nb_groupby_values = 0;
-
-        for (unsigned f = 0; f < state->field_no; f++) {
-            if (state->conf->fields[f].aggr) continue;
-            assert(nb_groupby_values < SIZEOF_ARRAY(grouped_values));
-            grouped_values[nb_groupby_values++] = state->values[f];
-        }
-
-        struct group *group = NULL;
-        if (0 == nb_groupby_values) {
-            fprintf(stderr, "Discard record %u which countains no grouped value\n", state->record_no+1);
-        } else {
-            // Look for this group in our hash (will create a new one if not found)
-            group = group_find_or_create(&state->groups, grouped_values, nb_groupby_values, state->conf);
-        }
-
-        if (group) {
-            // update the aggregate values in the group
-            unsigned nb_aggr_values = 0;
-            for (unsigned f = 0; f < state->field_no; f++) {
-                if (!state->conf->fields[f].aggr) continue;
-                // aggregate this value
-                union field_value current;
-                if (state->conf->fields[f].need_num) {
-                    char *end;
-                    current.num = strtoll(state->values[f], &end, 0);
-                    if (*end != '\0') {
-                        fprintf(stderr, "Cannot parse '%s' as numeric value (field %u, line %u)\n", state->values[f], f+1, state->record_no+1);
-                        state->record_err = true;
-                        return;
-                    }
-                } else {
-                    current.str = state->values[f];
-                }
-                assert(nb_aggr_values <= group->conf->nb_aggr_fields);
-                state->conf->fields[f].aggr->ops.fold(group->aggr_values[nb_aggr_values], &current);
-                nb_aggr_values ++;
-            }
-            if (nb_aggr_values > group->nb_aggr_fields) group->nb_aggr_fields = nb_aggr_values;
-        }
-    }
+    static char const *grouped_values[NB_MAX_FIELDS];
+    unsigned nb_groupby_values = 0;
 
     for (unsigned f = 0; f < state->field_no; f++) {
-        free((void *)state->values[f]);
+        if (state->conf->fields[f].aggr) continue;
+        assert(nb_groupby_values < SIZEOF_ARRAY(grouped_values));
+        grouped_values[nb_groupby_values++] = state->values[f];
+    }
+
+    struct group *group = NULL;
+    if (0 == nb_groupby_values) {
+        fprintf(stderr, "Discard record %u which countains no grouped value\n", state->record_no+1);
+    } else {
+        // Look for this group in our hash (will create a new one if not found)
+        group = group_find_or_create(&state->groups, grouped_values, nb_groupby_values, state->conf);
+    }
+
+    if (group) {
+        // update the aggregate values in the group
+        unsigned nb_aggr_values = 0;
+        for (unsigned f = 0; f < state->field_no; f++) {
+            if (!state->conf->fields[f].aggr) continue;
+            // aggregate this value
+            union field_value current;
+            if (state->conf->fields[f].need_num) {
+                char *end;
+                current.num = strtoll(state->values[f], &end, 0);
+                if (*end != '\0') {
+                    fprintf(stderr, "Cannot parse '%s' as numeric value (field %u, line %u)\n", state->values[f], f+1, state->record_no+1);
+                    return;
+                }
+            } else {
+                current.str = state->values[f];
+            }
+            assert(nb_aggr_values <= group->conf->nb_aggr_fields);
+            state->conf->fields[f].aggr->ops.fold(group->aggr_values[nb_aggr_values], &current);
+            nb_aggr_values ++;
+        }
+        if (nb_aggr_values > group->nb_aggr_fields) group->nb_aggr_fields = nb_aggr_values;
     }
 
     state->field_no = 0;
     state->record_no ++;
-    state->record_err = false;
 }
 
 static bool must_quote(char const *str, char const delimiter)

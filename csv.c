@@ -10,7 +10,7 @@ int csv_ctor(struct csv *csv, size_t max_row_size, char delimiter, ssize_t (*rea
 {
     csv->delimiter = delimiter;
     csv->max_row_size = max_row_size;
-    csv->buf_size = 2*max_row_size;
+    csv->buf_size = 3*max_row_size;
     if (debug) fprintf(stderr, "new csv with max_row_len = %zu and buf_size = %zu\n", max_row_size, csv->buf_size);
     csv->buffer = malloc(csv->buf_size+1);
     csv->datalen = 0;
@@ -121,17 +121,17 @@ int csv_parse(struct csv *csv, void (*field_cb)(void *, size_t, void *), void (*
             }
         }
 
-        char tmp = csv->buffer[csv->cursor];
+        char supp = csv->buffer[csv->cursor];
         csv->buffer[csv->cursor] = '\0';
         field_cb(csv->buffer + start, csv->cursor - start, csv->user_data);
-        csv->buffer[csv->cursor] = tmp;
         fieldno ++;
 
         if (quoted) {
-            assert(csv->buffer[csv->cursor] == '"');
+            assert(supp == '"');
             csv->cursor ++;
+            supp = csv->buffer[csv->cursor];
         }
-        if (csv->buffer[csv->cursor] == '\n') {
+        if (supp == '\n') {
             record_cb(csv->user_data);
             lineno ++;
             fieldno = 0;
@@ -142,7 +142,7 @@ int csv_parse(struct csv *csv, void (*field_cb)(void *, size_t, void *), void (*
                 csv_feed(csv);
             }
         } else {
-            assert(csv->buffer[csv->cursor] == csv->delimiter);
+            assert(supp == csv->delimiter);
             csv->cursor ++;
         }
     }
