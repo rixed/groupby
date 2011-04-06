@@ -37,11 +37,6 @@ static void set_range(struct row_conf *row_conf, unsigned first, unsigned last, 
         if ((!inv && in_between) || (inv && !in_between)) {
             assert(f < row_conf->nb_fields);
             row_conf->fields[f].need_num = aggr ? aggr->need_num : false;
-            if (aggr && !row_conf->fields[f].aggr) {
-                row_conf->nb_aggr_fields ++;
-            } else if (!aggr && row_conf->fields[f].aggr) {
-                row_conf->nb_aggr_fields --;
-            }
             row_conf->fields[f].aggr = aggr;
             if (aggr) {
                 if (debug) fprintf(stderr, "field %u uses aggr function %s\n", f, aggr->name);
@@ -72,13 +67,22 @@ static int set_fieldspec_conf(struct row_conf *row_conf, char const *start, char
     if (*start == '-') {
         start ++;
         last = strtoul(start, &eoi, 0);
-        start = eoi;
+        if (eoi == start) {
+            last = NB_MAX_FIELDS+1;
+        } else {
+            start = eoi;
+        }
     } else {
         last = first;
     }
 
     if (start < stop && *start != ',') {
         fprintf(stderr, "Bad field spec: '%.*s'\n", spec_len, spec);
+        return -1;
+    }
+
+    if (first == 0 || last == 0) {
+        fprintf(stderr, "Fields are numbered from 1\n");
         return -1;
     }
 
@@ -113,7 +117,7 @@ static int group_conf(struct row_conf *row_conf, char const *opt)
 
 static void syntax(void)
 {
-    printf("groupby [ -h | -a field_spec:function ... | -g field_spec ] [ -d char ] [ -v ]\n"
+    printf("groupby [-h | -a field_spec:function ... | -g field_spec] [-d char] [-i input] [-o output] [-v]\n"
            "\n"
            "where :\n"
            "  field_spec : n | n-m | -n | n- | field_spec,field_spec | !field_spec\n"
@@ -125,6 +129,7 @@ int main(int nb_args, char **args)
     struct row_conf *row_conf = row_conf_new(NB_MAX_FIELDS); // as a first version
     char delimiter = ',';
     int input = 0;
+    int output = 1;
 
     for (int a = 1; a < nb_args; a++) {
         if (strcasecmp(args[a], "-h") == 0 || strcasecmp(args[a], "--help") == 0) {
@@ -159,6 +164,13 @@ int main(int nb_args, char **args)
                 return EXIT_FAILURE;
             }
             a ++;
+        } else if ((strcasecmp(args[a], "-o") == 0 || strcasecmp(args[a], "--output") == 0) && a < nb_args-1) {
+            output = open(args[a+1], O_WRONLY);
+            if (output < 0) {
+                perror("open");
+                return EXIT_FAILURE;
+            }
+            a ++;
         } else {
             fprintf(stderr, "Unknown option '%s'\n", args[a]);
             syntax();
@@ -166,7 +178,9 @@ int main(int nb_args, char **args)
         }
     }
 
-    if (0 != do_groupby(row_conf, delimiter, input)) {
+    row_conf_finalize(row_conf);
+
+    if (0 != do_groupby(row_conf, delimiter, input, output)) {
         return EXIT_FAILURE;
     }
 

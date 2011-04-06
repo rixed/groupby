@@ -16,15 +16,16 @@ struct avg_value {
     long long sum;
 };
 
-static void *avg_new(void)
+static size_t avg_size(void)
 {
-    struct avg_value *v = malloc(sizeof(*v));
-    if (! v) return NULL;
+    return sizeof(struct avg_value);
+}
 
+static void avg_ctor(void *v_)
+{
+    struct avg_value *v = v_;
     v->nb_values = 0;
     v->sum = 0;
-
-    return v;
 }
 
 static void avg_fold(void *v_, union field_value const *current)
@@ -48,6 +49,11 @@ static char const *avg_finalize(void *v_)
  * Helper for common values
  */
 
+static size_t ll_size(void)
+{
+    return sizeof(long long);
+}
+
 static char const *ll_finalize(void *v_)
 {
     long long *v = v_;
@@ -61,13 +67,16 @@ struct str_value {
     size_t size;
 };
 
-static void *str_new(void)
+static size_t str_size(void)
 {
-    struct str_value *v = malloc(sizeof(*v));
-    if (! v) return NULL;
+    return sizeof(struct str_value);
+}
+
+static void str_ctor(void *v_)
+{
+    struct str_value *v = v_;
     v->str = NULL;
     v->size = 0;
-    return v;
 }
 
 static char const *str_finalize(void *v_)
@@ -98,14 +107,10 @@ static void str_value_set(struct str_value *v, char const *str)
  * Min
  */
 
-static void *min_new(void)
+static void min_ctor(void *v_)
 {
-    long long *v = malloc(sizeof(*v));
-    if (! v) return NULL;
-
+    long long *v = v_;
     *v = LLONG_MAX;
-
-    return v;
 }
 
 static void min_fold(void *v_, union field_value const *current)
@@ -118,14 +123,10 @@ static void min_fold(void *v_, union field_value const *current)
  * Max
  */
 
-static void *max_new(void)
+static void max_ctor(void *v_)
 {
-    long long *v = malloc(sizeof(*v));
-    if (! v) return NULL;
-
+    long long *v = v_;
     *v = LLONG_MIN;
-
-    return v;
 }
 
 static void max_fold(void *v_, union field_value const *current)
@@ -138,14 +139,10 @@ static void max_fold(void *v_, union field_value const *current)
  * Sum
  */
 
-static void *sum_new(void)
+static void sum_ctor(void *v_)
 {
-    long long *v = malloc(sizeof(*v));
-    if (! v) return NULL;
-
+    long long *v = v_;
     *v = 0;
-
-    return v;
 }
 
 static void sum_fold(void *v_, union field_value const *current)
@@ -199,14 +196,14 @@ static void greatest_fold(void *v_, union field_value const *current)
  */
 
 struct aggr_func aggr_funcs[] = {
-    { { avg_new, avg_fold, avg_finalize }, true, "avg" },
-    { { min_new, min_fold, ll_finalize }, true, "min" },
-    { { max_new, max_fold, ll_finalize }, true, "max" },
-    { { sum_new, sum_fold, ll_finalize }, true, "sum" },
-    { { str_new, first_fold, str_finalize }, false, "first" },
-    { { str_new, last_fold, str_finalize }, false, "last" },
-    { { str_new, smallest_fold, str_finalize }, false, "smallest" },
-    { { str_new, greatest_fold, str_finalize }, false, "greatest" },
+    { { avg_size, avg_ctor, avg_fold, avg_finalize }, true, "avg" },
+    { { ll_size, min_ctor, min_fold, ll_finalize }, true, "min" },
+    { { ll_size, max_ctor, max_fold, ll_finalize }, true, "max" },
+    { { ll_size, sum_ctor, sum_fold, ll_finalize }, true, "sum" },
+    { { str_size, str_ctor, first_fold, str_finalize }, false, "first" },
+    { { str_size, str_ctor, last_fold, str_finalize }, false, "last" },
+    { { str_size, str_ctor, smallest_fold, str_finalize }, false, "smallest" },
+    { { str_size, str_ctor, greatest_fold, str_finalize }, false, "greatest" },
 };
 
 unsigned nb_aggr_funcs = SIZEOF_ARRAY(aggr_funcs);

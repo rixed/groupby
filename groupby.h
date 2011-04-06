@@ -8,6 +8,7 @@
 #define SIZEOF_ARRAY(x) (sizeof(x)/sizeof(*(x)))
 #define NB_MAX_FIELDS 60
 #define NB_MAX_FIELD_LENGTH 50000
+#define MAX_RECORD_LENGTH (NB_MAX_FIELDS*(NB_MAX_FIELD_LENGTH+3))
 
 extern bool debug;
 
@@ -18,8 +19,10 @@ union field_value {
 
 extern struct aggr_func {
     struct aggr_ops {
-        // returns a new object to be given to fold
-        void *(* new)(void);
+        // return the size of the internal object to be allocated
+        size_t (* size)(void);
+        // construct a new object to be given to fold
+        void (* ctor)(void *);   // given pointer points to a space of AGGR_OBJ_SIZE bytes
         // update the object previously returned by new with a new value
         void (*fold)(void *old, union field_value const *current);
         // get the final value of the object (as a string)
@@ -34,6 +37,8 @@ extern unsigned nb_aggr_funcs;
 struct row_conf {
     unsigned nb_fields;
     unsigned nb_aggr_fields;    // how many of which have an aggr function
+    size_t aggr_cumul_size[NB_MAX_FIELDS];  // size of all values before this field
+    size_t aggr_tot_size;
     struct field_conf {
         bool need_num;
         struct aggr_func const *aggr; // If NULL then group by this field
@@ -43,15 +48,24 @@ struct row_conf {
 // Return an empty row_conf
 struct row_conf *row_conf_new(unsigned nb_fields_max);
 
-int do_groupby(struct row_conf const *, char delimiter, int file);
+void row_conf_finalize(struct row_conf *);
+
+int do_groupby(struct row_conf const *, char delimiter, int ifile, int ofile);
+
+struct key_str {
+    char *str;
+    unsigned len;
+};
+
+void key_str_append(struct key_str *, char const *);
+bool key_str_eq(struct key_str const *, struct key_str const *);
+unsigned key_str_extract(struct key_str const *, char const *res[NB_MAX_FIELDS]);
 
 struct group {
     SLIST_ENTRY(group) entry;
-    unsigned nb_grouped_fields;
-    char const **grouped_values;
-    struct row_conf const *conf;
-    unsigned nb_aggr_fields;    // how many aggr_fields were observed
-    void **aggr_values;  // number given by conf->nb_aggr_fields;
+    struct key_str grouped_values;
+    unsigned nb_fields;    // how many fields were observed, at max
+    char values[];  // size given by conf->aggr_tot_size
 };
 
 struct groups {
@@ -62,7 +76,7 @@ struct groups {
 
 int groups_ctor(struct groups *);
 void groups_dtor(struct groups *);
-struct group *group_find_or_create(struct groups *, char const **values, unsigned const nb_values, struct row_conf const *);
+struct group *group_find_or_create(struct groups *, struct key_str *, struct row_conf const *);
 void groups_foreach(struct groups *, void (*cb)(struct group *, void *), void *);
 
 struct csv {

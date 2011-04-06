@@ -9,34 +9,45 @@
 
 struct row_conf *row_conf_new(unsigned nb_fields_max)
 {
-    struct row_conf *row_conf;
-    size_t const size = sizeof(*row_conf) + nb_fields_max * sizeof(row_conf->fields[0]);
-    row_conf = malloc(size);
-    if (! row_conf) {
+    struct row_conf *conf;
+    size_t const size = sizeof(*conf) + nb_fields_max * sizeof(conf->fields[0]);
+    conf = malloc(size);
+    if (! conf) {
         fprintf(stderr, "Cannot malloc %zu bytes for row conf\n", size);
         return NULL;
     }
 
-    row_conf->nb_fields = nb_fields_max;
-    row_conf->nb_aggr_fields = 0;
-    for (unsigned f = 0; f < row_conf->nb_fields; f++) {
-        row_conf->fields[f].need_num = false;
-        row_conf->fields[f].aggr = NULL;
+    conf->nb_fields = nb_fields_max;
+    conf->nb_aggr_fields = 0;
+    conf->aggr_tot_size = 0;
+    for (unsigned f = 0; f < conf->nb_fields; f++) {
+        conf->fields[f].need_num = false;
+        conf->fields[f].aggr = NULL;
     }
 
-    return row_conf;
+    return conf;
+}
+
+void row_conf_finalize(struct row_conf *conf)
+{
+    for (unsigned f = 0; f < conf->nb_fields; f++) {
+        if (! conf->fields[f].aggr) continue;
+        conf->nb_aggr_fields ++;
+        conf->aggr_cumul_size[f] = conf->aggr_tot_size;
+        conf->aggr_tot_size += conf->fields[f].aggr->ops.size();
+    }
 }
 
 static struct state {
     struct row_conf const *conf;
     unsigned field_no, record_no;
-    int file;
+    int input, output;
     struct groups groups;
     char delimiter;
     char const *values[];    // as many values as conf->nb_fields
 } *state;
 
-static struct state *state_new(struct row_conf const *conf, int file, char delimiter)
+static struct state *state_new(struct row_conf const *conf, int input, int output, char delimiter)
 {
     struct state *state;
     size_t size = sizeof(*state) + conf->nb_fields * sizeof(state->values[0]);
@@ -47,7 +58,8 @@ static struct state *state_new(struct row_conf const *conf, int file, char delim
     }
 
     state->conf = conf;
-    state->file = file;
+    state->input = input;
+    state->output = output;
     state->delimiter = delimiter;
     state->field_no = state->record_no = 0;
     if (0 != groups_ctor(&state->groups)) {
@@ -81,26 +93,20 @@ static void record_cb(void *state_)
 {
     struct state *state = state_;
 
-    static char const *grouped_values[NB_MAX_FIELDS];
-    unsigned nb_groupby_values = 0;
+    static char key_buf[MAX_RECORD_LENGTH];
+    struct key_str key = { .str = key_buf, .len = 0 };
 
     for (unsigned f = 0; f < state->field_no; f++) {
         if (state->conf->fields[f].aggr) continue;
-        assert(nb_groupby_values < SIZEOF_ARRAY(grouped_values));
-        grouped_values[nb_groupby_values++] = state->values[f];
+        key_str_append(&key, state->values[f]);
     }
 
-    struct group *group = NULL;
-    if (0 == nb_groupby_values) {
-        fprintf(stderr, "Discard record %u which countains no grouped value\n", state->record_no+1);
-    } else {
-        // Look for this group in our hash (will create a new one if not found)
-        group = group_find_or_create(&state->groups, grouped_values, nb_groupby_values, state->conf);
-    }
+    // Look for this group in our hash (will create a new one if not found)
+    struct group *group = group_find_or_create(&state->groups, &key, state->conf);
 
     if (group) {
         // update the aggregate values in the group
-        unsigned nb_aggr_values = 0;
+        assert(state->field_no <= state->conf->nb_fields);
         for (unsigned f = 0; f < state->field_no; f++) {
             if (!state->conf->fields[f].aggr) continue;
             // aggregate this value
@@ -115,11 +121,9 @@ static void record_cb(void *state_)
             } else {
                 current.str = state->values[f];
             }
-            assert(nb_aggr_values <= group->conf->nb_aggr_fields);
-            state->conf->fields[f].aggr->ops.fold(group->aggr_values[nb_aggr_values], &current);
-            nb_aggr_values ++;
+            state->conf->fields[f].aggr->ops.fold(group->values + state->conf->aggr_cumul_size[f], &current);
         }
-        if (nb_aggr_values > group->nb_aggr_fields) group->nb_aggr_fields = nb_aggr_values;
+        if (state->field_no > group->nb_fields) group->nb_fields = state->field_no;
     }
 
     state->field_no = 0;
@@ -138,35 +142,40 @@ static void dump_group(struct group *group, void *state_)
 {
     struct state *state = state_;
     char delimiter[2] = { state->delimiter, '\0' };
+    static char line[MAX_RECORD_LENGTH];
 
-    unsigned grouped_field_no = 0, aggr_field_no = 0;
-
-    for (unsigned f = 0; f < group->nb_aggr_fields + group->nb_grouped_fields; f++) {
+    // extract grouped values from key_str
+    char const *grouped_values[NB_MAX_FIELDS];
+    unsigned const nb_grouped_values = key_str_extract(&group->grouped_values, grouped_values);
+    unsigned g = 0;
+    size_t len = 0;
+    for (unsigned f = 0; f < group->nb_fields; f++) {
         void const *src;
-        if (group->conf->fields[f].aggr) {
-            src = group->conf->fields[f].aggr->ops.finalize(group->aggr_values[aggr_field_no]);
-            aggr_field_no ++;
+        if (state->conf->fields[f].aggr) {
+            src = state->conf->fields[f].aggr->ops.finalize(group->values + state->conf->aggr_cumul_size[f]);
         } else {
-            src = group->grouped_values[grouped_field_no];
-            grouped_field_no ++;
+            assert(g < nb_grouped_values);
+            src = grouped_values[g++];
         }
         char const *const quote = must_quote(src, state->delimiter) ? "\"":"";
-        fprintf(stdout, "%s%s%s%s", f > 0 ? delimiter:"", quote, (char *)src, quote);
+        len += sprintf(line+len, "%s%s%s%s", f > 0 ? delimiter:"", quote, (char *)src, quote);
     }
-    fprintf(stdout, "\n");
+    len += sprintf(line+len, "\n");
+    assert(len < sizeof(line));
+    write(state->output, line, len);
 }
 
 static ssize_t reader(void *dst, size_t dst_size, void *state_)
 {
     struct state *state = state_;
-    ssize_t const r = read(state->file, dst, dst_size);
+    ssize_t const r = read(state->input, dst, dst_size);
     if (r < 0) perror("read");
     return r;
 }
 
-int do_groupby(struct row_conf const *row_conf, char delimiter, int file)
+int do_groupby(struct row_conf const *row_conf, char delimiter, int input, int output)
 {
-    state = state_new(row_conf, file, delimiter);
+    state = state_new(row_conf, input, output, delimiter);
     if (! state) return -1;
 
     struct csv csv;
